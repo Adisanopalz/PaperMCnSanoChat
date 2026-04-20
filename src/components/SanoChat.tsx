@@ -16,11 +16,10 @@ interface SanoChatProps {
 }
 
 export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoChatProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'model', text: 'Halo! Saya SanoChat. Ada yang bisa saya bantu tentang PaperMC atau server Minecraft Anda?' }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // In AI Studio Build, GEMINI_API_KEY is available in process.env.
@@ -29,19 +28,24 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
   const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   useEffect(() => {
+    if (!API_KEY) {
+      setShowSetup(true);
+    } else {
+      setMessages([{ role: 'model', text: 'Halo! Saya SanoChat. Ada yang bisa saya bantu tentang PaperMC atau server Minecraft Anda?' }]);
+    }
+  }, [API_KEY]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, showSetup]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
     if (!API_KEY) {
-      setMessages(prev => [...prev, { 
-        role: 'model', 
-        text: '### ⚠️ API Key Belum Terpasang\n\nUntuk menggunakan SanoChat di localhost atau GitHub, Anda perlu:\n1. Dapatkan API Key di [Google AI Studio](https://aistudio.google.com/app/apikey).\n2. Buat file `.env` di folder root proyek.\n3. Tambahkan baris: `VITE_GEMINI_API_KEY=KUNCI_ANDA_DISINI`.' 
-      }]);
+      setShowSetup(true);
       return;
     }
 
@@ -72,6 +76,53 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
     }
   };
 
+  const setupGuide = (
+    <div className="p-6 space-y-6">
+      <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-2xl p-6 text-center">
+        <div className="w-12 h-12 bg-cyan-500 rounded-2xl mx-auto flex items-center justify-center text-black mb-4 shadow-lg shadow-cyan-500/20">
+          <Sparkles size={24} />
+        </div>
+        <h3 className="text-lg font-bold text-white mb-2">Setup SanoChat AI</h3>
+        <p className="text-zinc-400 text-xs leading-relaxed">
+          SanoChat memerlukan Google Gemini API Key untuk berfungsi di luar lingkungan AI Studio.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Langkah-langkah:</h4>
+        
+        <div className="flex gap-4">
+          <div className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">1</div>
+          <p className="text-xs text-zinc-300">
+            Dapatkan API Key gratis di <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a>.
+          </p>
+        </div>
+
+        <div className="flex gap-4">
+          <div className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">2</div>
+          <div className="text-xs text-zinc-300 space-y-2">
+            <p>Tambahkan ke environment variable Proyek Anda:</p>
+            <div className="bg-black rounded-lg p-3 font-mono text-[10px] border border-white/5 leading-relaxed">
+              <span className="text-zinc-500"># Buat file .env di root folder</span><br/>
+              VITE_GEMINI_API_KEY=<span className="text-cyan-400">kunci_anda_disini</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-4">
+          <div className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">3</div>
+          <p className="text-xs text-zinc-300">
+            Restart dev server Anda (jika menjalankan localhost) atau deploy ulang proyek Anda.
+          </p>
+        </div>
+      </div>
+
+      <div className="pt-4 border-t border-white/5 text-[10px] text-zinc-500 text-center italic">
+        SanoChat akan otomatis aktif setelah API Key terdeteksi.
+      </div>
+    </div>
+  );
+
   const content = (
     <div className={`flex flex-col h-full bg-transparent overflow-hidden ${isSidebar ? '' : 'rounded-2xl border border-white/10 shadow-2xl bg-zinc-900 shadow-black'}`}>
       {/* Header */}
@@ -98,60 +149,66 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
         )}
       </div>
 
-      {/* Messages */}
+      {/* Messages / Setup Area */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin"
+        className="flex-1 overflow-y-auto scrollbar-thin"
       >
-        {messages.map((m, i) => (
-          <div 
-            key={i} 
-            className="flex flex-col gap-1"
-          >
-            <p className={`text-[10px] uppercase tracking-wider font-bold mb-1 ${m.role === 'model' ? 'text-cyan-400' : 'text-white/40'}`}>
-              {m.role === 'model' ? 'SanoChat' : 'User'}
-            </p>
-            <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
-              m.role === 'user' 
-                ? 'bg-white/5 text-zinc-300 border border-white/5' 
-                : 'bg-cyan-500/10 text-zinc-200 border border-cyan-500/20'
-            }`}>
-              <div className="prose prose-invert prose-xs max-w-none">
-                <Markdown>{m.text}</Markdown>
+        {showSetup ? setupGuide : (
+          <div className="p-6 space-y-6">
+            {messages.map((m, i) => (
+              <div 
+                key={i} 
+                className="flex flex-col gap-1"
+              >
+                <p className={`text-[10px] uppercase tracking-wider font-bold mb-1 ${m.role === 'model' ? 'text-cyan-400' : 'text-white/40'}`}>
+                  {m.role === 'model' ? 'SanoChat' : 'User'}
+                </p>
+                <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                  m.role === 'user' 
+                    ? 'bg-white/5 text-zinc-300 border border-white/5' 
+                    : 'bg-cyan-500/10 text-zinc-200 border border-cyan-500/20'
+                }`}>
+                  <div className="prose prose-invert prose-xs max-w-none">
+                    <Markdown>{m.text}</Markdown>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex flex-col gap-1 animate-pulse">
-            <p className="text-[10px] uppercase tracking-wider font-bold mb-1 text-cyan-400">SanoChat</p>
-            <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-xl px-4 py-3 text-zinc-500 text-sm">
-              Berpikir...
-            </div>
+            ))}
+            {isLoading && (
+              <div className="flex flex-col gap-1 animate-pulse">
+                <p className="text-[10px] uppercase tracking-wider font-bold mb-1 text-cyan-400">SanoChat</p>
+                <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-xl px-4 py-3 text-zinc-500 text-sm">
+                  Berpikir...
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Input */}
-      <div className="p-6 border-t border-white/5 bg-black/20">
-        <div className="relative group">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Tanya SanoChat..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/50 focus:ring-0 transition-all"
-          />
-          <button 
-            onClick={handleSend}
-            disabled={isLoading || !input.trim()}
-            className="absolute right-3 top-2.5 p-1.5 text-cyan-500 hover:text-cyan-400 disabled:opacity-30 transition-all"
-          >
-            <Zap size={18} fill={isLoading || !input.trim() ? "none" : "currentColor"} />
-          </button>
+      {!showSetup && (
+        <div className="p-6 border-t border-white/5 bg-black/20">
+          <div className="relative group">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Tanya SanoChat..."
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-cyan-500/50 focus:ring-0 transition-all"
+            />
+            <button 
+              onClick={handleSend}
+              disabled={isLoading || !input.trim()}
+              className="absolute right-3 top-2.5 p-1.5 text-cyan-500 hover:text-cyan-400 disabled:opacity-30 transition-all"
+            >
+              <Zap size={18} fill={isLoading || !input.trim() ? "none" : "currentColor"} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
