@@ -1,46 +1,65 @@
 import { useState, useEffect } from 'react';
-import { Search, Download, ExternalLink, Package, Star, AlertCircle } from 'lucide-react';
+import { Search, Download, ExternalLink, Package, Star, AlertCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-interface ModrinthProject {
-  project_id: string;
+interface PluginProject {
+  id: string;
+  source: 'modrinth' | 'hangar';
   title: string;
   description: string;
   icon_url: string;
   downloads: number;
   slug: string;
   author: string;
-  latest_version?: string;
+  owner?: string; // Specific to Hangar
 }
 
 export default function PluginBrowser() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<ModrinthProject[]>([]);
+  const [activeSource, setActiveSource] = useState<'modrinth' | 'hangar'>('modrinth');
+  const [results, setResults] = useState<PluginProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-  const searchPlugins = async (val: string) => {
+  const searchPlugins = async (val: string, source: 'modrinth' | 'hangar') => {
     if (!val.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      // Modrinth Search API
-      const response = await fetch(`https://api.modrinth.com/v2/search?query=${encodeURIComponent(val)}&facets=[["categories:paper"],["project_type:mod"]]`);
-      const data = await response.json();
-      
-      const mappedResults: ModrinthProject[] = data.hits.map((hit: any) => ({
-        project_id: hit.project_id,
-        title: hit.title,
-        description: hit.description,
-        icon_url: hit.icon_url,
-        downloads: hit.downloads,
-        slug: hit.slug,
-        author: hit.author,
-      }));
-      
-      setResults(mappedResults);
+      if (source === 'modrinth') {
+        const response = await fetch(`https://api.modrinth.com/v2/search?query=${encodeURIComponent(val)}&facets=[["categories:paper"],["project_type:mod"]]`);
+        const data = await response.json();
+        const mappedResults: PluginProject[] = data.hits.map((hit: any) => ({
+          id: hit.project_id,
+          source: 'modrinth',
+          title: hit.title,
+          description: hit.description,
+          icon_url: hit.icon_url,
+          downloads: hit.downloads,
+          slug: hit.slug,
+          author: hit.author,
+        }));
+        setResults(mappedResults);
+      } else {
+        // Hangar Search API
+        const response = await fetch(`https://hangar.papermc.io/api/v1/projects?q=${encodeURIComponent(val)}`);
+        const data = await response.json();
+        const mappedResults: PluginProject[] = (data.result || []).map((hit: any) => ({
+          id: hit.namespace.slug,
+          source: 'hangar',
+          title: hit.name,
+          description: hit.description,
+          icon_url: hit.avatarUrl,
+          downloads: hit.stats.downloads,
+          slug: hit.namespace.slug,
+          author: hit.namespace.owner,
+          owner: hit.namespace.owner,
+        }));
+        setResults(mappedResults);
+      }
     } catch (err) {
-      setError('Koneksi ke repository (Modrinth) terputus.');
+      setError(`Koneksi ke repository (${source === 'modrinth' ? 'Modrinth' : 'Hangar'}) terputus.`);
       console.error(err);
     } finally {
       setLoading(false);
@@ -49,11 +68,55 @@ export default function PluginBrowser() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (query) searchPlugins(query);
+      if (query) searchPlugins(query, activeSource);
       else setResults([]);
     }, 500);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, activeSource]);
+
+  const handleDownload = async (plugin: PluginProject) => {
+    setDownloadingId(plugin.id);
+    try {
+      let downloadUrl = '';
+      let filename = `${plugin.slug}.jar`;
+
+      if (plugin.source === 'modrinth') {
+        const versionRes = await fetch(`https://api.modrinth.com/v2/project/${plugin.id}/version?limit=1`);
+        const versions = await versionRes.json();
+        if (versions.length > 0) {
+          const file = versions[0].files[0];
+          downloadUrl = file.url;
+          filename = file.filename;
+        }
+      } else {
+        // Hangar Download logic
+        const versionRes = await fetch(`https://hangar.papermc.io/api/v1/projects/${plugin.owner}/${plugin.slug}/versions?limit=1`);
+        const data = await versionRes.json();
+        if (data.result && data.result.length > 0) {
+          const version = data.result[0].name;
+          // Hangar doesn't always provide a direct JAR URL easily via simple search, but it has a download redirect
+          downloadUrl = `https://hangar.papermc.io/api/v1/projects/${plugin.owner}/${plugin.slug}/versions/${version}/download`;
+        }
+      }
+
+      if (downloadUrl) {
+        // Trigger browser download
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert('Maaf, URL download tidak ditemukan untuk versi terbaru.');
+      }
+    } catch (err) {
+      console.error('Download error:', err);
+      alert('Gagal mendownload plugin. Silakan coba link eksternal.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   return (
     <div className="space-y-12">
@@ -68,7 +131,7 @@ export default function PluginBrowser() {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-cyan-500 transition-colors" size={18} />
           <input 
             type="text" 
-            placeholder="Cari Essentials, LuckPerms, Geyser..."
+            placeholder={`Cari di ${activeSource === 'modrinth' ? 'Modrinth' : 'Hangar'}...`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-12 pr-4 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500/50 transition-all font-medium"
@@ -77,8 +140,18 @@ export default function PluginBrowser() {
       </header>
 
       <div className="flex gap-4">
-        <div className="px-3 py-1 bg-cyan-500 text-black rounded text-[10px] font-bold uppercase tracking-widest">Modrinth</div>
-        <div className="px-3 py-1 bg-white/5 text-white/40 rounded text-[10px] font-bold uppercase tracking-widest">Hangar (Syncing...)</div>
+        <button 
+          onClick={() => setActiveSource('modrinth')}
+          className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'modrinth' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+        >
+          Modrinth
+        </button>
+        <button 
+          onClick={() => setActiveSource('hangar')}
+          className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'hangar' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+        >
+          Hangar
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -90,7 +163,7 @@ export default function PluginBrowser() {
           ) : results.length > 0 ? (
             results.map((plugin, idx) => (
               <motion.div
-                key={plugin.project_id}
+                key={`${plugin.source}-${plugin.id}`}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.05 }}
@@ -105,9 +178,12 @@ export default function PluginBrowser() {
                       alt={plugin.title} 
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${plugin.slug}/64/64`;
+                      }}
                     />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h4 className="text-sm font-bold text-white truncate group-hover/card:text-cyan-400 transition-colors">{plugin.title}</h4>
                     <p className="text-[10px] text-white/40 uppercase tracking-wider font-bold">BY {plugin.author}</p>
                   </div>
@@ -125,21 +201,35 @@ export default function PluginBrowser() {
                     </div>
                     <div className="flex items-center gap-1 uppercase tracking-tighter">
                       <Package size={12} />
-                      Jar
+                      {plugin.source}
                     </div>
                   </div>
                   
                   <div className="flex items-center gap-2">
                     <a 
-                      href={`https://modrinth.com/mod/${plugin.slug}`}
+                      href={plugin.source === 'modrinth' ? `https://modrinth.com/mod/${plugin.slug}` : `https://hangar.papermc.io/${plugin.owner}/${plugin.slug}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="p-2 bg-white/5 text-white/20 hover:text-white rounded-lg transition-colors"
                     >
                       <ExternalLink size={14} />
                     </a>
-                    <button className="px-4 py-2 bg-cyan-500 text-black text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-cyan-400 transition-all active:scale-95">
-                      Download
+                    <button 
+                      onClick={() => handleDownload(plugin)}
+                      disabled={downloadingId !== null}
+                      className="px-4 py-2 bg-cyan-500 text-black text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-cyan-400 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {downloadingId === plugin.id ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          Wait..
+                        </>
+                      ) : (
+                        <>
+                          <Download size={12} />
+                          Download
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -162,3 +252,4 @@ export default function PluginBrowser() {
     </div>
   );
 }
+
