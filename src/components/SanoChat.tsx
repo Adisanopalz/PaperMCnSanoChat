@@ -3,6 +3,8 @@ import { Send, Bot, User, X, Sparkles, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { GoogleGenAI } from "@google/genai";
+import { auth } from '../lib/firebase';
+import { User as FirebaseUser } from 'firebase/auth';
 
 interface Message {
   role: 'user' | 'model';
@@ -13,9 +15,10 @@ interface SanoChatProps {
   isOpen?: boolean;
   onClose?: () => void;
   isSidebar?: boolean;
+  user?: FirebaseUser | null;
 }
 
-export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoChatProps) {
+export default function SanoChat({ isOpen, onClose, isSidebar = false, user = null }: SanoChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -31,9 +34,12 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
     if (!API_KEY) {
       setShowSetup(true);
     } else {
-      setMessages([{ role: 'model', text: 'Halo! Saya SanoChat. Ada yang bisa saya bantu tentang PaperMC atau server Minecraft Anda?' }]);
+      const welcomeMsg = user 
+        ? `Halo ${user.displayName || 'Sano Citizen'}! Saya SanoChat, asisten AI pribadi Anda. Ada yang bisa saya bantu dengan PaperMC atau server Anda hari ini?`
+        : 'Halo! Saya SanoChat. Saya ahli dalam PaperMC dan server Minecraft. Bagaimana saya bisa membantu Anda hari ini?';
+      setMessages([{ role: 'model', text: welcomeMsg }]);
     }
-  }, [API_KEY]);
+  }, [API_KEY, user]);
 
   useEffect(() => {
     if (scrollRef.current) {

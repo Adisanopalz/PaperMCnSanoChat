@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Download, 
   Search, 
@@ -11,9 +11,21 @@ import {
   Zap,
   Info,
   Menu,
-  X
+  X,
+  LogIn,
+  LogOut,
+  User as UserIcon,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  signOut, 
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, googleProvider, githubProvider, db } from './lib/firebase';
 import { PAPER_DATA } from './constants';
 import SanoChat from './components/SanoChat';
 import PluginBrowser from './components/PluginBrowser';
@@ -23,6 +35,59 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'software' | 'plugins' | 'tools'>('software');
   const [search, setSearch] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // Sync user with Firestore
+  const syncUserToFirestore = async (user: FirebaseUser) => {
+    const userRef = doc(db, 'users', user.uid);
+    const userSnap = await getDoc(userRef);
+
+    const userData = {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      lastLogin: serverTimestamp(),
+    };
+
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        ...userData,
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(userRef, userData, { merge: true });
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthLoading(false);
+      if (currentUser) {
+        syncUserToFirestore(currentUser);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async (provider: 'google' | 'github') => {
+    try {
+      const targetProvider = provider === 'google' ? googleProvider : githubProvider;
+      await signInWithPopup(auth, targetProvider);
+    } catch (error) {
+      console.error('Auth error:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
 
   const filteredVersions = PAPER_DATA.versions.filter(v => 
     v.version.toLowerCase().includes(search.toLowerCase())
@@ -35,7 +100,7 @@ export default function App() {
       
       {/* Sidebar: SanoChat AI (Left) */}
       <aside className="hidden lg:flex w-[380px] bg-dark-sidebar border-r border-white/5 flex-col overflow-hidden shrink-0">
-        <SanoChat isSidebar />
+        <SanoChat isSidebar user={user} />
       </aside>
 
       {/* Main Content (Right) */}
@@ -74,6 +139,53 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
+            {isAuthLoading ? (
+              <div className="w-8 h-8 rounded-full bg-white/5 animate-pulse" />
+            ) : user ? (
+              <div className="flex items-center gap-3 pr-2 border-r border-white/10 mr-2">
+                <div className="text-right hidden sm:block">
+                  <p className="text-[10px] font-black text-white uppercase leading-none">{user.displayName || 'User'}</p>
+                  <p className="text-[8px] text-cyan-400 uppercase tracking-widest font-bold mt-1">Authorized</p>
+                </div>
+                <div className="group relative">
+                  <img 
+                    src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                    className="w-8 h-8 rounded-full border border-cyan-500/50 hover:scale-110 transition-transform cursor-pointer"
+                    alt="Profile"
+                  />
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                    <div className="p-3 border-b border-white/5 mb-2">
+                      <p className="text-xs font-bold text-white truncate">{user.email}</p>
+                      <p className="text-[10px] text-white/40 uppercase mt-1">Sano Citizen</p>
+                    </div>
+                    <button 
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[10px] font-bold text-red-400 hover:bg-red-400/10 rounded-lg transition-colors uppercase tracking-widest group/out"
+                    >
+                      <LogOut size={14} className="group-hover/out:translate-x-0.5 transition-transform" />
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 pr-2 border-r border-white/10 mr-2">
+                <button 
+                  onClick={() => handleLogin('google')}
+                  className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all group"
+                  title="Sign in with Google"
+                >
+                  <LogIn size={16} className="text-cyan-400 group-hover:scale-110 transition-transform" />
+                </button>
+                <button 
+                  onClick={() => handleLogin('github')}
+                  className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all group"
+                  title="Sign in with GitHub"
+                >
+                  <Github size={16} className="text-white group-hover:scale-110 transition-transform" />
+                </button>
+              </div>
+            )}
             <div className="hidden sm:block text-[10px] text-white/20 tracking-[0.2em] font-mono">SYS.VER: 4.2.0-SANO</div>
             <button 
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -108,7 +220,7 @@ export default function App() {
                 ))}
               </div>
               <div className="flex-1 overflow-y-auto">
-                <SanoChat isSidebar />
+                <SanoChat isSidebar user={user} />
               </div>
             </motion.div>
           )}
