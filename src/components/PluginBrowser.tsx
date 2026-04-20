@@ -21,14 +21,18 @@ export default function PluginBrowser() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'relevance' | 'downloads' | 'newest' | 'updated'>('relevance');
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const [downloadStatus, setDownloadStatus] = useState<Record<string, 'success' | 'error' | 'idle'>>({});
 
-  const searchPlugins = async (val: string, source: 'modrinth' | 'hangar') => {
+  const searchPlugins = async (val: string, source: 'modrinth' | 'hangar', sort: string) => {
     if (!val.trim()) return;
     setLoading(true);
     setError(null);
     try {
       if (source === 'modrinth') {
-        const response = await fetch(`https://api.modrinth.com/v2/search?query=${encodeURIComponent(val)}&facets=[["categories:paper"],["project_type:mod"]]`);
+        const modrinthSort = sort === 'relevance' ? 'relevance' : sort;
+        const response = await fetch(`https://api.modrinth.com/v2/search?query=${encodeURIComponent(val)}&facets=[["categories:paper"],["project_type:mod"]]&index=${modrinthSort}`);
         const data = await response.json();
         const mappedResults: PluginProject[] = data.hits.map((hit: any) => ({
           id: hit.project_id,
@@ -42,8 +46,13 @@ export default function PluginBrowser() {
         }));
         setResults(mappedResults);
       } else {
-        // Hangar Search API
-        const response = await fetch(`https://hangar.papermc.io/api/v1/projects?q=${encodeURIComponent(val)}`);
+        // Hangar Search API mapping for sort
+        let hangarSort = 'relevance';
+        if (sort === 'downloads') hangarSort = 'downloads';
+        if (sort === 'newest') hangarSort = 'newest';
+        if (sort === 'updated') hangarSort = 'updated';
+
+        const response = await fetch(`https://hangar.papermc.io/api/v1/projects?q=${encodeURIComponent(val)}&sort=${hangarSort}`);
         const data = await response.json();
         const mappedResults: PluginProject[] = (data.result || []).map((hit: any) => ({
           id: hit.namespace.slug,
@@ -68,14 +77,17 @@ export default function PluginBrowser() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (query) searchPlugins(query, activeSource);
+      if (query) searchPlugins(query, activeSource, sortBy);
       else setResults([]);
     }, 500);
     return () => clearTimeout(timer);
-  }, [query, activeSource]);
+  }, [query, activeSource, sortBy]);
 
   const handleDownload = async (plugin: PluginProject) => {
     setDownloadingId(plugin.id);
+    setDownloadProgress(prev => ({ ...prev, [plugin.id]: 0 }));
+    setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'idle' }));
+    
     try {
       let downloadUrl = '';
       let filename = `${plugin.slug}.jar`;
@@ -89,30 +101,75 @@ export default function PluginBrowser() {
           filename = file.filename;
         }
       } else {
-        // Hangar Download logic
         const versionRes = await fetch(`https://hangar.papermc.io/api/v1/projects/${plugin.owner}/${plugin.slug}/versions?limit=1`);
         const data = await versionRes.json();
         if (data.result && data.result.length > 0) {
           const version = data.result[0].name;
-          // Hangar doesn't always provide a direct JAR URL easily via simple search, but it has a download redirect
           downloadUrl = `https://hangar.papermc.io/api/v1/projects/${plugin.owner}/${plugin.slug}/versions/${version}/download`;
         }
       }
 
       if (downloadUrl) {
-        // Trigger browser download
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
+        setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'idle' }));
+        
+        // Use Fetch to track progress
+        const response = await fetch(downloadUrl);
+        if (!response.ok) throw new Error('Network response was not ok');
+        
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        let loaded = 0;
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('Response body is null');
+
+        const chunks: Uint8Array[] = [];
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          chunks.push(value);
+          loaded += value.length;
+          
+          if (total > 0) {
+            setDownloadProgress(prev => ({ ...prev, [plugin.id]: Math.round((loaded / total) * 100) }));
+          } else {
+            // Fake progress if content-length is missing
+            setDownloadProgress(prev => ({ ...prev, [plugin.id]: Math.min(prev[plugin.id] + 5, 95) }));
+          }
+        }
+
+        const blob = new Blob(chunks);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.body.appendChild(document.createElement('a'));
+        link.href = url;
+        link.download = filename;
         link.click();
-        document.body.removeChild(link);
+        
+        // Cleanup
+        setTimeout(() => {
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(link);
+        }, 100);
+
+        setDownloadProgress(prev => ({ ...prev, [plugin.id]: 100 }));
+        setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'success' }));
+        setTimeout(() => {
+          setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'idle' }));
+          setDownloadProgress(prev => {
+            const next = { ...prev };
+            delete next[plugin.id];
+            return next;
+          });
+        }, 3000);
       } else {
-        alert('Maaf, URL download tidak ditemukan untuk versi terbaru.');
+        throw new Error('No download URL');
       }
     } catch (err) {
       console.error('Download error:', err);
-      alert('Gagal mendownload plugin. Silakan coba link eksternal.');
+      setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'error' }));
+      setTimeout(() => setDownloadStatus(prev => ({ ...prev, [plugin.id]: 'idle' })), 3000);
     } finally {
       setDownloadingId(null);
     }
@@ -139,19 +196,34 @@ export default function PluginBrowser() {
         </div>
       </header>
 
-      <div className="flex gap-4">
-        <button 
-          onClick={() => setActiveSource('modrinth')}
-          className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'modrinth' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-        >
-          Modrinth
-        </button>
-        <button 
-          onClick={() => setActiveSource('hangar')}
-          className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'hangar' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-        >
-          Hangar
-        </button>
+      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+        <div className="flex gap-4">
+          <button 
+            onClick={() => setActiveSource('modrinth')}
+            className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'modrinth' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+          >
+            Modrinth
+          </button>
+          <button 
+            onClick={() => setActiveSource('hangar')}
+            className={`px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all ${activeSource === 'hangar' ? 'bg-cyan-500 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+          >
+            Hangar
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-white/20 uppercase tracking-widest mr-2">Sort By</span>
+          {(['relevance', 'downloads', 'newest', 'updated'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSortBy(s)}
+              className={`px-3 py-1 rounded text-[10px] font-bold uppercase tracking-tighter transition-all ${sortBy === s ? 'text-cyan-400 border border-cyan-400/30' : 'text-white/20 hover:text-white/40'}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -192,6 +264,37 @@ export default function PluginBrowser() {
                 <p className="text-xs text-white/50 line-clamp-2 mb-6 flex-1 leading-relaxed">
                   {plugin.description}
                 </p>
+
+                {/* Progress Bar Container */}
+                <AnimatePresence>
+                  {downloadProgress[plugin.id] !== undefined && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="mb-4 overflow-hidden"
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-cyan-400">
+                          {downloadStatus[plugin.id] === 'success' ? 'Download Complete' : 
+                           downloadStatus[plugin.id] === 'error' ? 'Download Failed' : 
+                           `Downloading JAR... ${downloadProgress[plugin.id]}%`}
+                        </span>
+                      </div>
+                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ 
+                            width: `${downloadProgress[plugin.id]}%`,
+                            backgroundColor: downloadStatus[plugin.id] === 'success' ? '#22c55e' : 
+                                            downloadStatus[plugin.id] === 'error' ? '#ef4444' : '#06b6d4'
+                          }}
+                          className="h-full transition-all duration-300"
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
                   <div className="flex items-center gap-3 text-[10px] font-bold text-white/30">

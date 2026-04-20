@@ -23,7 +23,10 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+  // In AI Studio Build, GEMINI_API_KEY is available in process.env.
+  // In local development (Vite), use VITE_GEMINI_API_KEY in .env file.
+  const API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -33,6 +36,14 @@ export default function SanoChat({ isOpen, onClose, isSidebar = false }: SanoCha
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+
+    if (!API_KEY) {
+      setMessages(prev => [...prev, { 
+        role: 'model', 
+        text: '### ⚠️ API Key Belum Terpasang\n\nUntuk menggunakan SanoChat di localhost atau GitHub, Anda perlu:\n1. Dapatkan API Key di [Google AI Studio](https://aistudio.google.com/app/apikey).\n2. Buat file `.env` di folder root proyek.\n3. Tambahkan baris: `VITE_GEMINI_API_KEY=KUNCI_ANDA_DISINI`.' 
+      }]);
+      return;
+    }
 
     const userMessage = input.trim();
     setInput('');
